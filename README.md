@@ -10,7 +10,7 @@ make
 ### Executar
 Para executar o ep1:
 ```sh
-./ep1 p
+./broker # será executado na porta 1883 (padrão do MQTT)
 ```
 onde p é a porta utilizada pelo broker.
 
