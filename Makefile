@@ -5,4 +5,4 @@ build-warn:
 	gcc src/main.c -o broker.out
 
 run:
-	make build && ./broker.out >> run.log
+	make build && ./broker.out

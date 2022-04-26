@@ -262,19 +262,20 @@ void process_mqtt(int connfd)
 
             printf("%s > Subscribed to topic '%s'\n", who, topic);
 
-            struct file topic_file = listen_topic(topic);
+            char *fifo_path = create_fifo(topic);
             for (;;)
             {
-                read_fixed_header(topic_file.fd, &p);
-                read_last_bytes(topic_file.fd, &p);
+                int fifo_fd = open(fifo_path, O_RDONLY);
+                read_fixed_header(fifo_fd, &p);
+                read_last_bytes(fifo_fd, &p);
 
                 /* PUBLISH (sent from Server to a Client) */
                 write(connfd, p.raw_bytes, p.raw_bytes_length);
-
                 printf("%s > Received message from topic '%s' and sent to client\n", who, topic);
-            }
-            close(topic_file.fd);
 
+                close(fifo_fd);
+            }
+            free(fifo_path);
             free(topic);
         }
 

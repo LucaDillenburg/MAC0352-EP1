@@ -10,17 +10,10 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 
-/* Structs */
-struct file
-{
-    char *path;
-    int fd;
-};
-
 /* Function Headers */
 void send_message(char *topic, char *bytes, int length);
-struct file listen_topic(char *topic);
-void stop_listening_topic(struct file f);
+char *create_fifo(char *topic);
+void delete_fifo(char *fifo_path);
 void create_dir(char *dir);
 
 /* Defines */
@@ -99,7 +92,6 @@ void send_message(char *topic, char *bytes, int length)
     free(path_preffix);
     free(path_suffix);
 
-    printf("> Openning dir: '%s'\n", topic_dir_path);
     DIR *topic_dir = opendir(topic_dir_path);
     if (topic_dir == NULL)
     {
@@ -123,36 +115,30 @@ void send_message(char *topic, char *bytes, int length)
     closedir(topic_dir);
 }
 
-/* Returns file descriptor */
-struct file listen_topic(char *topic)
+/* Returns the fifo path */
+char *create_fifo(char *topic)
 {
-    struct file f;
     char *dir_name = get_dir_path(topic);
-    f.path = tempnam(NULL, dir_name);
-    create_dir(f.path);
+    char *fifo_path = tempnam(NULL, dir_name);
+    create_dir(fifo_path);
     free(dir_name);
 
     /* O modo é 0644 para que o processo possa escrever e os
      * outros processos ou usuários possam ler */
-    if (mkfifo((const char *)f.path, FILE_MODE) == -1)
+    if (mkfifo((const char *)fifo_path, FILE_MODE) == -1)
     {
         perror("mkfifo :(\n");
         exit(8);
     }
 
-    printf("Openning file: '%s'\n", f.path); // TODO: REMOVE
-    f.fd = open(f.path, O_RDONLY);
-    printf("Finishing openning file: '%s'\n", f.path); // TODO: REMOVE
-    return f;
+    return fifo_path;
 }
 
-/* Returns file descriptor */
-void stop_listening_topic(struct file f)
+void delete_fifo(char *fifo_path)
 {
-    close(f.fd);
-    if (remove(f.path) != 0)
+    if (remove(fifo_path) != 0)
         perror("remove :(\n");
-    free(f.path);
+    free(fifo_path);
 }
 
 #endif
