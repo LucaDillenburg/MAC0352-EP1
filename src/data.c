@@ -2,6 +2,7 @@
 #define DATA_C
 
 /* MQTT Packet Types */
+#define UNEXISTING 0 /* not defined by MQTT but helps the ode flow */
 #define CONNECT 1
 #define CONNACK 2
 #define PUBLISH 3
@@ -19,12 +20,19 @@
 
 /* Structs */
 
-struct packet_header
+struct packet
 {
     unsigned char type;
     unsigned char flags;
     unsigned int id;
-    char *last_ptr;
+
+    /* Informação relativa a quanto já leu do packet */
+    char *raw_bytes;
+    /* Informação relativa a quanto já leu do packet */
+    long raw_bytes_length;
+
+    /* Informação absoluta do tamanho total do packet */
+    long total_raw_bytes_length;
 };
 
 struct vector

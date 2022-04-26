@@ -30,8 +30,13 @@
 /* Function Headers */
 void start_broker_server();
 void process_mqtt(int connfd);
-char *parse_fixed_header(char *bytes, struct packet_header *header);
-char *parse_packet_identifier(char *bytes, struct packet_header *header);
+
+void read_fixed_header(int fd, struct packet *p);
+void read_total_raw_bytes_length(int fd, struct packet *p);
+void read_last_bytes(int fd, struct packet *p);
+
+char *read_string(int fd, struct packet *p, int length);
+unsigned int read_int(int fd, struct packet *p);
 
 /* ========================================================= */
 /*                            MAIN                           */
@@ -39,6 +44,8 @@ char *parse_packet_identifier(char *bytes, struct packet_header *header);
 
 int main(int argc, char **argv)
 {
+    // TODO: REMOVE
+
     // listen_topic("topic");
 
     // char *path = argv[1];
@@ -180,27 +187,21 @@ void start_broker_server()
 
 void process_mqtt(int connfd)
 {
-    /* Armazena o tamanho da string lida do cliente */
-    ssize_t length;
-    /* Armazena linhas recebidas do cliente */
-    char bytes_received[MAXLINE + 1];
     /* Armazena o packet atual */
-    struct packet_header packet_header;
+    struct packet p;
+    p.raw_bytes = (char *)malloc(MAXLINE * sizeof(char));
     /* Armazena os dados que serão enviados */
     struct vector send_data;
-    /* Armazena o ponteiro para o resto dos bytes */
-    char *rest_bytes;
 
     /* CONNECT */
     /* TODO: Consider Flags */
-    length = read(connfd, bytes_received, MAXLINE);
-    rest_bytes = parse_fixed_header(bytes_received, &packet_header);
-    if (length == 0 || packet_header.type != CONNECT)
+    read_fixed_header(connfd, &p);
+    if (p.type != CONNECT)
     {
         perror("connect :(\n");
         exit(6);
     }
-    printf("> Recebeu CONNECT\n");
+    read_last_bytes(connfd, &p);
 
     /* CONNACK */
     /* TODO: Consider Flags and Different responses */
@@ -212,103 +213,143 @@ void process_mqtt(int connfd)
     send_data.array[3] = 0;
     write(connfd, send_data.array, send_data.length);
     free(send_data.array);
-    printf("> Enviou CONNACK\n");
 
     char *who;
-    while ((length = read(connfd, bytes_received, MAXLINE)) > 0)
+    for (;;)
     {
-        rest_bytes = parse_fixed_header(bytes_received, &packet_header);
+        read_fixed_header(connfd, &p);
+        if (p.type == UNEXISTING)
+            break;
 
-        if (packet_header.type == PUBLISH)
+        if (p.type == PUBLISH)
         {
             /* TODO: Consider Flags */
             who = "pub";
 
-            unsigned int topic_length = construct_int(rest_bytes[1], rest_bytes[0]);
-            char *topic = copy_str(&rest_bytes[2], topic_length);
-            rest_bytes += 2 + topic_length;
+            unsigned int topic_length = read_int(connfd, &p);
+            char *topic = read_string(connfd, &p, topic_length);
 
-            unsigned long int message_length = packet_header.last_ptr - rest_bytes + 1;
-            char *message = copy_str(rest_bytes, message_length);
+            unsigned long int message_length = p.total_raw_bytes_length - p.raw_bytes_length;
+            char *message = read_string(connfd, &p, message_length);
 
-            printf("%s > Sending message to topic '%s': '%s'\n", who, topic, message);
-            send_message(topic, bytes_received, length);
+            read_last_bytes(connfd, &p);
+
+            send_message(topic, p.raw_bytes, p.raw_bytes_length);
             printf("%s > Sent message to topic '%s': '%s'\n", who, topic, message);
             free(topic);
             free(message);
-
-            printf("%s #### Message: ", who);
-            print_bytes(bytes_received, length);
         }
-        else if (packet_header.type == SUBSCRIBE)
+        else if (p.type == SUBSCRIBE)
         {
-            /* TODO: Consider Flags */
             who = "sub";
 
-            rest_bytes = parse_packet_identifier(rest_bytes, &packet_header);
-
-            unsigned int topic_length = construct_int(rest_bytes[1], rest_bytes[0]);
-            char *topic = copy_str(&rest_bytes[2], topic_length);
-            printf("%s > Subscribed to topic '%s'\n", who, topic);
+            /* TODO: Consider Flags */
+            p.id = read_int(connfd, &p);
+            unsigned int topic_length = read_int(connfd, &p);
+            char *topic = read_string(connfd, &p, topic_length);
+            read_last_bytes(connfd, &p);
 
             /* SUBACK */
             send_data.length = 5;
             send_data.array = (char *)malloc(4 * sizeof(char));
             send_data.array[0] = 0x90;
             send_data.array[1] = 0x03;
-            send_data.array[2] = high_char(packet_header.id);
-            send_data.array[3] = low_char(packet_header.id);
+            send_data.array[2] = high_char(p.id);
+            send_data.array[3] = low_char(p.id);
             send_data.array[4] = 0;
             write(connfd, send_data.array, send_data.length);
             free(send_data.array);
-            printf("%s > Enviou SUBACK\n", who);
+
+            printf("%s > Subscribed to topic '%s'\n", who, topic);
 
             struct file topic_file = listen_topic(topic);
-            while ((length = read(topic_file.fd, bytes_received, MAXLINE)) > 0)
+            for (;;)
             {
-                printf("%s > Received message from topic Subscribed to topic '%s'\n", who, topic);
+                read_fixed_header(topic_file.fd, &p);
+                read_last_bytes(topic_file.fd, &p);
 
                 /* PUBLISH (sent from Server to a Client) */
-                long a = write(connfd, bytes_received, length);
-                printf("%s #### Message: ", who);
-                print_bytes(bytes_received, length);
-                long b = fflush(connfd);
-                printf("\n%s > Enviou PUBLISH to client (bytes: %u, a: %u, b: %u)\n", who, length, a, b);
+                write(connfd, p.raw_bytes, p.raw_bytes_length);
+
+                printf("%s > Received message from topic '%s' and sent to client\n", who, topic);
             }
+            close(topic_file.fd);
 
             free(topic);
         }
 
+        read_last_bytes(connfd, &p);
         printf("%s > Waiting new packet\n", who);
     }
 
     printf("%s > No more messages\n", who);
+    free(p.raw_bytes);
 }
 
 /* ========================================================= */
 /*                          PARSING                          */
 /* ========================================================= */
 
-char *parse_fixed_header(char *bytes, struct packet_header *header)
+void read_fixed_header(int fd, struct packet *p)
 {
-    header->flags = bytes[0] & 0x0F;       /* 4 low bits of byte */
-    header->type = (bytes[0] >> 4) & 0x0F; /* 4 high bits of byte */
+    int length = read(fd, p->raw_bytes, 1);
+    if (length <= 0)
+    {
+        p->type = UNEXISTING;
+        return;
+    }
+    p->raw_bytes_length = 1;
 
-    long remaining_length = 0;
-    char *rest_bytes = decode_remaining_length(&bytes[1], &remaining_length);
-    header->last_ptr = rest_bytes + remaining_length - 1;
+    p->flags = p->raw_bytes[0] & 0x0F;       /* 4 low bits of byte */
+    p->type = (p->raw_bytes[0] >> 4) & 0x0F; /* 4 high bits of byte */
 
-    return rest_bytes;
+    read_total_raw_bytes_length(fd, p);
 }
 
-char *parse_packet_identifier(char *bytes, struct packet_header *header)
+void read_total_raw_bytes_length(int fd, struct packet *p)
 {
-    char *rest_bytes = bytes;
+    int multiplier = 1;
+    p->total_raw_bytes_length = 0;
+    char encoded_byte = -1;
+    do
+    {
+        int length = read(fd, &encoded_byte, 1);
+        p->raw_bytes[p->raw_bytes_length] = encoded_byte;
+        p->raw_bytes_length++;
 
-    char msb_id = rest_bytes[0];
-    char lsb_id = rest_bytes[1];
-    header->id = construct_int(lsb_id, msb_id);
-    rest_bytes += 2;
+        p->total_raw_bytes_length += (encoded_byte & 127) * multiplier;
+        multiplier *= 128;
+    } while ((encoded_byte & 128) != 0);
+    p->total_raw_bytes_length += p->raw_bytes_length;
+}
 
-    return rest_bytes;
+void read_last_bytes(int fd, struct packet *p)
+{
+    long length = read(fd, &p->raw_bytes[p->raw_bytes_length], p->total_raw_bytes_length - p->raw_bytes_length);
+    p->raw_bytes_length += length;
+}
+
+/* ========================================================= */
+/*                       USUAL READS                         */
+/* ========================================================= */
+
+char *read_string(int fd, struct packet *p, int length)
+{
+    read(fd, &p->raw_bytes[p->raw_bytes_length], length);
+    char *str = copy_str(&p->raw_bytes[p->raw_bytes_length], length);
+    p->raw_bytes_length += length;
+    return str;
+}
+
+unsigned int read_int(int fd, struct packet *p)
+{
+    read(fd, &p->raw_bytes[p->raw_bytes_length], 2);
+
+    char msb_id = p->raw_bytes[p->raw_bytes_length];
+    char lsb_id = p->raw_bytes[p->raw_bytes_length + 1];
+    unsigned int integer = construct_int(lsb_id, msb_id);
+
+    p->raw_bytes_length += 2;
+
+    return integer;
 }

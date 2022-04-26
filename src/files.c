@@ -114,10 +114,9 @@ void send_message(char *topic, char *bytes, int length)
         {
             char *file_name = (char *)malloc((strlen(topic_dir_path) + strlen(file->d_name) + 2) * sizeof(char));
             sprintf(file_name, "%s%s", topic_dir_path, file->d_name);
-            printf("> Sending message to '%s'\n", file_name);
             int fd = open(file_name, O_WRONLY);
-            printf("> Openned file to WRITE: '%s'\n", file_name);
             write(fd, bytes, length);
+            printf("> Sent message message to file (%d bytes): '%s'\n", length, file_name);
             close(fd);
         }
     }
