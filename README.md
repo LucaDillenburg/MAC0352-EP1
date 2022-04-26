@@ -14,6 +14,11 @@ Para executar o ep1:
 ```
 onde p é a porta utilizada pelo broker.
 
+### Restrições
+- QoS = 0
+- Não considera as Flags
+- Não considera o Keep Alive para disconectar se demorar muito tempo para receber os bytes
+
 ### Autor
 - Nome: Luca Assumpção Dillenburg
 - NUSP: 11796580

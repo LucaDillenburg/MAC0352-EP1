@@ -262,24 +262,45 @@ void process_mqtt(int connfd)
 
             printf("%s > Subscribed to topic '%s'\n", who, topic);
 
-            char *fifo_path = create_fifo(topic);
-            for (;;)
+            if (fork() == 0)
             {
-                int fifo_fd = open(fifo_path, O_RDONLY);
-                read_fixed_header(fifo_fd, &p);
-                read_last_bytes(fifo_fd, &p);
+                /* TRANSMIT PUBLISH PACKETS */
+                char *fifo_path = create_fifo(topic);
+                for (;;)
+                {
+                    int fifo_fd = open(fifo_path, O_RDONLY);
+                    read_fixed_header(fifo_fd, &p);
+                    read_last_bytes(fifo_fd, &p);
 
-                /* PUBLISH (sent from Server to a Client) */
-                write(connfd, p.raw_bytes, p.raw_bytes_length);
-                printf("%s > Received message from topic '%s' and sent to client\n", who, topic);
+                    /* PUBLISH (sent from Server to a Client) */
+                    write(connfd, p.raw_bytes, p.raw_bytes_length);
+                    printf("%s > Received message from topic '%s' and sent to client\n", who, topic);
 
-                close(fifo_fd);
+                    close(fifo_fd);
+                }
+                free(fifo_path);
+                exit(0);
             }
-            free(fifo_path);
+            /* else: HANDLE MORE CONTROL PACKETS */
             free(topic);
         }
+        else if (p.type == PINGREQ)
+        {
+            read_last_bytes(connfd, &p);
 
-        read_last_bytes(connfd, &p);
+            /* PINGRESP */
+            send_data.length = 2;
+            send_data.array = (char *)malloc(2 * sizeof(char));
+            send_data.array[0] = 0xD0;
+            send_data.array[1] = 0x0;
+            write(connfd, send_data.array, send_data.length);
+            free(send_data.array);
+
+            printf("%s > Received and answered a ping\n", who);
+        }
+        else
+            printf("%s > Received unknown packet, type: %d\n", who, p.type);
+
         printf("%s > Waiting new packet\n", who);
     }
 
