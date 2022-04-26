@@ -40,7 +40,7 @@ char *encode_topic(char *topic)
         char topic_char = topic[i];
         char decoded_char;
         if (topic_char == ' ' || topic_char == '/' || topic_char == '\\')
-            decoded_char = ' ';
+            decoded_char = '_';
         else
             decoded_char = topic_char;
         encoded[j] = decoded_char;
@@ -68,10 +68,7 @@ void create_dir(char *dir)
             dir[i] = '\0';
 
             if (access(dir, F_OK) == -1)
-            {
-                int res = mkdir(dir, FILE_MODE);
-                printf("Created folder: '%s' | Res: %d\n", dir, res); // TODO: REMOVE
-            }
+                mkdir(dir, FILE_MODE);
 
             dir[i] = '/';
         }
