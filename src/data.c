@@ -19,13 +19,12 @@
 
 /* Structs */
 
-struct mttq_packet
+struct packet_header
 {
-    char type;
-    char flags;
-    char id;
-    char *payload;
-    long int payload_length;
+    unsigned char type;
+    unsigned char flags;
+    unsigned int id;
+    char *last_ptr;
 };
 
 struct vector

@@ -6,13 +6,13 @@
  * <batista@ime.usp.br>.
  */
 
-#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
 #include <string.h>
 #include <netdb.h>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <sys/socket.h>
 #include <arpa/inet.h>
@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include "data.c"
 #include "utils.c"
+#include "files.c"
 
 #define LISTENQ 1
 #define MAXDATASIZE 100
@@ -29,10 +30,8 @@
 /* Function Headers */
 void start_broker_server();
 void process_mqtt(int connfd);
-struct mttq_packet packet_from_bytes(char *bytes);
-void print_packet(struct mttq_packet packet);
-int has_payload(int packet_type);
-int has_packet_identifier(int packet_type);
+char *parse_fixed_header(char *bytes, struct packet_header *header);
+char *parse_packet_identifier(char *bytes, struct packet_header *header);
 
 /* ========================================================= */
 /*                            MAIN                           */
@@ -40,6 +39,18 @@ int has_packet_identifier(int packet_type);
 
 int main(int argc, char **argv)
 {
+    // listen_topic("topic");
+
+    // char *path = argv[1];
+    // printf("path: '%s'\n", path);
+    // DIR *topic_dir = opendir(path);
+    // struct dirent *file;
+    // while ((file = readdir(topic_dir)) != NULL)
+    //     printf("> Got file: '%s'\n", file->d_name);
+
+    // char *msg = "hello world";
+    // send_message("topic1", msg, strlen(msg));
+
     start_broker_server();
     return 0;
 }
@@ -100,8 +111,8 @@ void start_broker_server()
         exit(4);
     }
 
-    printf("[Servidor no ar. Aguardando conexões na porta %s]\n", BROKER_PORT);
-    printf("[Para finalizar, pressione CTRL+c ou rode um kill ou killall]\n");
+    printf("[MQQT Broker is open. Waiting connections in port %s.]\n", BROKER_PORT);
+    printf("[To stop the server, press CTRL+c.]\n");
 
     /* O servidor no final das contas é um loop infinito de espera por
      * conexões e processamento de cada uma individualmente */
@@ -172,30 +183,27 @@ void process_mqtt(int connfd)
     /* Armazena o tamanho da string lida do cliente */
     ssize_t length;
     /* Armazena linhas recebidas do cliente */
-    char recvline[MAXLINE + 1];
+    char bytes_received[MAXLINE + 1];
     /* Armazena o packet atual */
-    struct mttq_packet packet;
+    struct packet_header packet_header;
     /* Armazena os dados que serão enviados */
     struct vector send_data;
+    /* Armazena o ponteiro para o resto dos bytes */
+    char *rest_bytes;
 
     /* CONNECT */
-    /* TODO: reject connections that are not level 4 (version 3.1.1) */
-    /* TODO: Clean Session => Position: bit 1 of the Connect Flags byte */
-    /* TODO: Will Message Flag => Position: bit 2 of the Connect Flags byte (send this message after connection ends unless told not to by disconnect) */
-    length = read(connfd, recvline, MAXLINE);
-    packet = packet_from_bytes(recvline);
-    if (length == 0 || packet.type != CONNECT)
+    /* TODO: Consider Flags */
+    length = read(connfd, bytes_received, MAXLINE);
+    rest_bytes = parse_fixed_header(bytes_received, &packet_header);
+    if (length == 0 || packet_header.type != CONNECT)
     {
         perror("connect :(\n");
         exit(6);
     }
-    // TODO: REMOVE
-    printf("# Packet Recebido:\n");
-    print_bytes(recvline, length);
-    print_packet(packet);
-    printf("\n");
+    printf("> Recebeu CONNECT\n");
 
     /* CONNACK */
+    /* TODO: Consider Flags and Different responses */
     send_data.length = 4;
     send_data.array = (char *)malloc(4 * sizeof(char));
     send_data.array[0] = 0x20;
@@ -204,78 +212,103 @@ void process_mqtt(int connfd)
     send_data.array[3] = 0;
     write(connfd, send_data.array, send_data.length);
     free(send_data.array);
-    printf("# Enviado\n"); // TODO: REMOVE
+    printf("> Enviou CONNACK\n");
 
-    while ((length = read(connfd, recvline, MAXLINE)) > 0)
+    char *who;
+    while ((length = read(connfd, bytes_received, MAXLINE)) > 0)
     {
-        recvline[length] = 0;
+        rest_bytes = parse_fixed_header(bytes_received, &packet_header);
 
-        packet = packet_from_bytes(recvline);
-        printf("# Packet Recebido:\n");
-        print_bytes(recvline, length);
-        print_packet(packet);
-        printf("\n");
-
-        if (packet.type == PUBLISH)
+        if (packet_header.type == PUBLISH)
         {
-            unsigned int topic_length = construct_int(packet.payload[1], packet.payload[0]);
-            char *topic = (char *)malloc(topic_length + 1 * sizeof(char));
-            memcpy(topic, packet.payload[2], topic_length);
-            topic[topic_length] = '\0';
+            /* TODO: Consider Flags */
+            who = "pub";
 
-            unsigned int message_length = construct_int(
-                packet.payload[2 + topic_length], packet.payload[1 + topic_length]);
-            char *message = (char *)malloc(message_length + 1 * sizeof(char));
-            memcpy(message, packet.payload[2], message_length);
-            message[message_length] = '\0';
+            unsigned int topic_length = construct_int(rest_bytes[1], rest_bytes[0]);
+            char *topic = copy_str(&rest_bytes[2], topic_length);
+            rest_bytes += 2 + topic_length;
 
-            printf("Sent message to topic '%s': '%s'\n", topic, topic);
+            unsigned long int message_length = packet_header.last_ptr - rest_bytes + 1;
+            char *message = copy_str(rest_bytes, message_length);
+
+            printf("%s > Sending message to topic '%s': '%s'\n", who, topic, message);
+            send_message(topic, bytes_received, length);
+            printf("%s > Sent message to topic '%s': '%s'\n", who, topic, message);
+            free(topic);
+            free(message);
+
+            printf("%s #### Message: ", who);
+            print_bytes(bytes_received, length);
+        }
+        else if (packet_header.type == SUBSCRIBE)
+        {
+            /* TODO: Consider Flags */
+            who = "sub";
+
+            rest_bytes = parse_packet_identifier(rest_bytes, &packet_header);
+
+            unsigned int topic_length = construct_int(rest_bytes[1], rest_bytes[0]);
+            char *topic = copy_str(&rest_bytes[2], topic_length);
+            printf("%s > Subscribed to topic '%s'\n", who, topic);
+
+            /* SUBACK */
+            send_data.length = 5;
+            send_data.array = (char *)malloc(4 * sizeof(char));
+            send_data.array[0] = 0x90;
+            send_data.array[1] = 0x03;
+            send_data.array[2] = high_char(packet_header.id);
+            send_data.array[3] = low_char(packet_header.id);
+            send_data.array[4] = 0;
+            write(connfd, send_data.array, send_data.length);
+            free(send_data.array);
+            printf("%s > Enviou SUBACK\n", who);
+
+            struct file topic_file = listen_topic(topic);
+            while ((length = read(topic_file.fd, bytes_received, MAXLINE)) > 0)
+            {
+                printf("%s > Received message from topic Subscribed to topic '%s'\n", who, topic);
+
+                /* PUBLISH (sent from Server to a Client) */
+                long a = write(connfd, bytes_received, length);
+                printf("%s #### Message: ", who);
+                print_bytes(bytes_received, length);
+                long b = fflush(connfd);
+                printf("\n%s > Enviou PUBLISH to client (bytes: %u, a: %u, b: %u)\n", who, length, a, b);
+            }
+
+            free(topic);
         }
 
-        /* TODO: flags PUBLISH | bytes: DUP1 QoS2 QoS2 RETAIN3 | Duplicate delivery of a PUBLISH Control Packet */
-    }
-}
-
-struct mttq_packet packet_from_bytes(char *bytes)
-{
-    struct mttq_packet packet;
-    bzero(&packet, sizeof(packet));
-    char *rest_bytes;
-
-    /* FIXED HEADER */
-    packet.flags = bytes[0] & 0x0F; /* 4 low bits of byte */
-    packet.type = bytes[0] >> 4;    /* 4 high bits of byte */
-    long remaining_length = decode_remaining_length(&bytes[1], &rest_bytes);
-
-    /* VARIABLE HEADER */
-    if (has_packet_identifier(packet.type))
-    {
-        char msb_id = rest_bytes[0];
-        char lsb_id = rest_bytes[1];
-        packet.id = construct_int(lsb_id, msb_id);
-        rest_bytes += 2;
-        remaining_length -= 2;
+        printf("%s > Waiting new packet\n", who);
     }
 
-    /* PAYLOAD */
-    if (has_payload(packet.type))
-    {
-        packet.payload = rest_bytes;
-        packet.payload_length = remaining_length;
-    }
-
-    return packet;
+    printf("%s > No more messages\n", who);
 }
 
-int has_payload(int packet_type)
+/* ========================================================= */
+/*                          PARSING                          */
+/* ========================================================= */
+
+char *parse_fixed_header(char *bytes, struct packet_header *header)
 {
-    return packet_type == CONNECT || packet_type == PUBLISH || packet_type == SUBSCRIBE ||
-           packet_type == SUBACK || packet_type == UNSUBSCRIBE;
+    header->flags = bytes[0] & 0x0F;       /* 4 low bits of byte */
+    header->type = (bytes[0] >> 4) & 0x0F; /* 4 high bits of byte */
+
+    long remaining_length = 0;
+    char *rest_bytes = decode_remaining_length(&bytes[1], &remaining_length);
+    header->last_ptr = rest_bytes + remaining_length - 1;
+
+    return rest_bytes;
 }
 
-int has_packet_identifier(int packet_type)
+char *parse_packet_identifier(char *bytes, struct packet_header *header)
 {
-    return packet_type == PUBACK || packet_type == PUBREC || packet_type == PUBREL ||
-           packet_type == PUBCOMP || packet_type == SUBSCRIBE || packet_type == SUBACK ||
-           packet_type == UNSUBSCRIBE || packet_type == UNSUBACK;
+    char *rest_bytes = bytes;
+
+    char msb_id = rest_bytes[0];
+    char lsb_id = rest_bytes[1];
+    header->id = construct_int(lsb_id, msb_id);
+    rest_bytes += 2;
+
+    return rest_bytes;
 }

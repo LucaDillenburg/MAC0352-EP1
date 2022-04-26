@@ -3,13 +3,19 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <string.h>
 #include "data.c"
 
 /* Function Headers */
 void print_bytes(char *bytes, int length);
-long int decode_remaining_length(char *encoded_remaining_length, char **remaining_ptr);
+char *decode_remaining_length(char *encoded_remaining_length, long int *remaining_length);
 unsigned int construct_int(unsigned char low, unsigned char high);
-void printf_binary(unsigned int number);
+unsigned char high_char(unsigned int n);
+unsigned char low_char(unsigned int n);
+void print_packet_header(struct packet_header header);
+void print_binary(unsigned int number);
+int last_index_of(char *str, char c);
+char *copy_str(char *src, int n);
 
 /* ========================================================= */
 /*                   FUNCTION DEFINITIONS                    */
@@ -22,21 +28,21 @@ void print_bytes(char *bytes, int length)
     printf("\n");
 }
 
-long int decode_remaining_length(char *encoded_remaining_length, char **remaining_ptr)
+char *decode_remaining_length(char *encoded_remaining_length, long int *remaining_length)
 {
+    char *rest_bytes = encoded_remaining_length;
     int multiplier = 1;
-    long int remaining_length = 0;
+    *remaining_length = 0;
     char encoded_byte;
-    *remaining_ptr = encoded_remaining_length;
     do
     {
-        encoded_byte = **remaining_ptr;
-        remaining_length += (encoded_byte & 127) * multiplier;
+        encoded_byte = *rest_bytes;
+        *remaining_length += (encoded_byte & 127) * multiplier;
         multiplier *= 128;
-        *remaining_ptr = *remaining_ptr + 1;
+        rest_bytes++;
     } while ((encoded_byte & 128) != 0);
-    *remaining_ptr = *remaining_ptr + 1;
-    return remaining_length;
+    // *remaining_ptr = *remaining_ptr + 1;
+    return rest_bytes;
 }
 
 unsigned int construct_int(unsigned char low, unsigned char high)
@@ -44,23 +50,32 @@ unsigned int construct_int(unsigned char low, unsigned char high)
     return low + (high << CHAR_BIT);
 }
 
-void print_packet(struct mttq_packet packet)
+unsigned char high_char(unsigned int n)
 {
-    printf("{ type: %d, flags: %d, id: %d, payload_length: %ld }\n",
-           (int)packet.type, (int)packet.flags, (int)packet.id, packet.payload_length);
-    printf("  |> payload: ");
-    print_bytes(packet.payload, packet.payload_length);
+    return n & 0xff;
 }
 
-// Código adapdado do Stack Overflow feito por <roylewilliam>
-// (referência: https://stackoverflow.com/a/70930112/11317116).
-// Prints the binary representation of any unsigned integer
-// When running, pass 1 to first_call
-void printf_binary(unsigned int number)
+unsigned char low_char(unsigned int n)
+{
+    return n >> CHAR_BIT;
+}
+
+void print_packet_header(struct packet_header header)
+{
+    printf("{ type: %d, flags: %d, id: %d }\n",
+           (int)header.type, (int)header.flags, (int)header.id);
+}
+
+/**
+ * Código adapdado do Stack Overflow feito por <roylewilliam>
+ * (referência: https://stackoverflow.com/a/70930112/11317116).
+ * Prints the binary representation of any unsigned integer.
+ * **/
+void print_binary(unsigned int number)
 {
     if (number >> 1)
     {
-        printf_binary(number >> 1);
+        print_binary(number >> 1);
         putc((number & 1) ? '1' : '0', stdout);
     }
     else
@@ -69,15 +84,22 @@ void printf_binary(unsigned int number)
     }
 }
 
-size_t copy_str(char *dst, const char *src, size_t dstsize)
+char *copy_str(char *src, int n)
 {
-    size_t len = strlen(src);
-    if (dstsize)
-    {
-        size_t bl = (len < dstsize - 1 ? len : dstsize - 1);
-        ((char *)memcpy(dst, src, bl))[bl] = 0;
-    }
-    return len;
+    char *cpy = (char *)malloc((n + 1) * sizeof(char));
+    memcpy((void *)cpy, (void *)src, n);
+    cpy[n] = '\0';
+    return cpy;
+}
+
+int last_index_of(char *str, char c)
+{
+    int length = strlen(str);
+    int index_of = -1;
+    for (int i = 0; i < length; i++)
+        if (str[i] == c)
+            index_of = i;
+    return index_of;
 }
 
 #endif
