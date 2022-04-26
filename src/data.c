@@ -24,7 +24,8 @@ struct packet
 {
     unsigned char type;
     unsigned char flags;
-    unsigned int id;
+    unsigned char id_lsb;
+    unsigned char id_msb;
 
     /* Informação relativa a quanto já leu do packet */
     char *raw_bytes;

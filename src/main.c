@@ -35,8 +35,9 @@ void read_fixed_header(int fd, struct packet *p);
 void read_total_raw_bytes_length(int fd, struct packet *p);
 void read_last_bytes(int fd, struct packet *p);
 
-char *read_string(int fd, struct packet *p, int length);
+unsigned char read_byte(int fd, struct packet *p);
 unsigned int read_int(int fd, struct packet *p);
+char *read_string(int fd, struct packet *p, int length);
 
 /* ========================================================= */
 /*                            MAIN                           */
@@ -44,20 +45,6 @@ unsigned int read_int(int fd, struct packet *p);
 
 int main(int argc, char **argv)
 {
-    // TODO: REMOVE
-
-    // listen_topic("topic");
-
-    // char *path = argv[1];
-    // printf("path: '%s'\n", path);
-    // DIR *topic_dir = opendir(path);
-    // struct dirent *file;
-    // while ((file = readdir(topic_dir)) != NULL)
-    //     printf("> Got file: '%s'\n", file->d_name);
-
-    // char *msg = "hello world";
-    // send_message("topic1", msg, strlen(msg));
-
     start_broker_server();
     return 0;
 }
@@ -214,7 +201,7 @@ void process_mqtt(int connfd)
     write(connfd, send_data.array, send_data.length);
     free(send_data.array);
 
-    char *who;
+    char *who = (char *)malloc(100 * sizeof(char));
     for (;;)
     {
         read_fixed_header(connfd, &p);
@@ -223,17 +210,16 @@ void process_mqtt(int connfd)
 
         if (p.type == PUBLISH)
         {
-            /* TODO: Consider Flags */
-            who = "pub";
+            sprintf(who, "(pub: %u%u)", (unsigned int)p.id_msb, (unsigned int)p.id_lsb);
 
+            /* TODO: Consider Flags */
             unsigned int topic_length = read_int(connfd, &p);
             char *topic = read_string(connfd, &p, topic_length);
-
             unsigned long int message_length = p.total_raw_bytes_length - p.raw_bytes_length;
             char *message = read_string(connfd, &p, message_length);
-
             read_last_bytes(connfd, &p);
 
+            /* Send message to fifo */
             send_message(topic, p.raw_bytes, p.raw_bytes_length);
             printf("%s > Sent message to topic '%s': '%s'\n", who, topic, message);
             free(topic);
@@ -241,10 +227,11 @@ void process_mqtt(int connfd)
         }
         else if (p.type == SUBSCRIBE)
         {
-            who = "sub";
+            sprintf(who, "(sub: %u%u)", (unsigned int)p.id_msb, (unsigned int)p.id_lsb);
 
             /* TODO: Consider Flags */
-            p.id = read_int(connfd, &p);
+            p.id_msb = read_byte(connfd, &p);
+            p.id_lsb = read_byte(connfd, &p);
             unsigned int topic_length = read_int(connfd, &p);
             char *topic = read_string(connfd, &p, topic_length);
             read_last_bytes(connfd, &p);
@@ -254,8 +241,8 @@ void process_mqtt(int connfd)
             send_data.array = (char *)malloc(4 * sizeof(char));
             send_data.array[0] = 0x90;
             send_data.array[1] = 0x03;
-            send_data.array[2] = high_char(p.id);
-            send_data.array[3] = low_char(p.id);
+            send_data.array[2] = p.id_msb;
+            send_data.array[3] = p.id_lsb;
             send_data.array[4] = 0;
             write(connfd, send_data.array, send_data.length);
             free(send_data.array);
@@ -355,12 +342,12 @@ void read_last_bytes(int fd, struct packet *p)
 /*                       USUAL READS                         */
 /* ========================================================= */
 
-char *read_string(int fd, struct packet *p, int length)
+unsigned char read_byte(int fd, struct packet *p)
 {
-    read(fd, &p->raw_bytes[p->raw_bytes_length], length);
-    char *str = copy_str(&p->raw_bytes[p->raw_bytes_length], length);
-    p->raw_bytes_length += length;
-    return str;
+    read(fd, &p->raw_bytes[p->raw_bytes_length], 1);
+    char c = p->raw_bytes[p->raw_bytes_length];
+    p->raw_bytes_length += 1;
+    return c;
 }
 
 unsigned int read_int(int fd, struct packet *p)
@@ -374,4 +361,12 @@ unsigned int read_int(int fd, struct packet *p)
     p->raw_bytes_length += 2;
 
     return integer;
+}
+
+char *read_string(int fd, struct packet *p, int length)
+{
+    read(fd, &p->raw_bytes[p->raw_bytes_length], length);
+    char *str = copy_str(&p->raw_bytes[p->raw_bytes_length], length);
+    p->raw_bytes_length += length;
+    return str;
 }
