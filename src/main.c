@@ -22,6 +22,8 @@
 #include "utils.c"
 #include "files.c"
 
+#define SHOW_LOG 0
+
 #define LISTENQ 1
 #define MAXDATASIZE 100
 #define MAXLINE 4096
@@ -283,12 +285,14 @@ void process_mqtt(int connfd)
             write(connfd, send_data.array, send_data.length);
             free(send_data.array);
 
-            printf("%s > Received and answered a ping\n", who);
+            if (SHOW_LOG)
+                printf("%s > Received and answered a ping\n", who);
         }
         else
             printf("%s > Received unknown packet, type: %d\n", who, p.type);
 
-        printf("%s > Waiting new packet\n", who);
+        if (SHOW_LOG)
+            printf("%s > Waiting new packet\n", who);
     }
 
     printf("%s > No more messages\n", who);

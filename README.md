@@ -10,18 +10,23 @@ make
 ### Executar
 Para executar o ep1:
 ```sh
-./broker # será executado na porta 1883 (padrão do MQTT)
+make run # será executado na porta 1883 (padrão do MQTT)
 ```
 onde p é a porta utilizada pelo broker.
 
+**Atenção:** quando um cliente é desconectado forçadamente, ele pode deixar os arquivos FIFO no sistema sem serem deletados, causando bloqueio de escrita dos publishers. Por isso, lembre-se de apague os arquivos temporários criados em pastas como "/tmp/MAC0352_mqtt_broker/" ou "/var/tmp/MAC0352_mqtt_broker/", especialmente quando for parar todos os clientes e rodar novamente.
+
 ### Restrições
-- QoS = 0
-- Não considera as Flags
-- Não considera o Keep Alive para disconectar se demorar muito tempo para receber os bytes
-- Não foi programado o UNSUB
-- Não foi programado sistemas de recuperação a falhas nem autenticação
-- Não foi programado a inscrição de um subscriber em mais de um tópico nem utilizando wildcards
-- Não foi programado a inscrição de um cliente ser publisher e subscriber
+- Suporata apenas QoS = 0
+- Não considera muitas das flags de escrita e subscription (ex: autenticação, dup,...)
+- Não irá se desconectar dos clientes se o cliente não enviar o PINGREQ independente do Keep Alive
+- O packet UNSUB não está sendo considerado
+- O broker considera que não haverão falhas de comunicação ou internet: o sistema não é resiliente nem resistente a falhas
+- Um subscriber se inscrever em mais de um tópico não é suportado (nem pela utilização de wildcards)
+- Um cliente não pode ser publisher e subscriber simultaneamente
+
+### Slides
+- [URL](https://docs.google.com/presentation/d/1I2aE9jhjssRu1Ofp3MfY8_dwsTfiIXfTl-sInsvFobM/edit#slide=id.p)
 
 ### Autor
 - Nome: Luca Assumpção Dillenburg
